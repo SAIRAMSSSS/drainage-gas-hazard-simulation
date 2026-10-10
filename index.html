@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>STM32 Edge-AI Underground Drainage Hazard Simulator</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-dim: #8b949e;
+      --accent: #58a6ff;
+      --green: #2ea043;
+      --red: #f85149;
+      --yellow: #d29922;
+      --purple: #bc8cff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; }
+    body { background-color: var(--bg); color: var(--text); padding: 20px; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 20px; }
+    h1 { font-size: 20px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 12px; background: #21262d; border: 1px solid var(--border); color: var(--accent); }
+    .badge.danger { background: rgba(248,81,73,0.15); border-color: var(--red); color: var(--red); }
+    .badge.success { background: rgba(46,160,67,0.15); border-color: var(--green); color: var(--green); }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .col-3 { grid-column: span 3; }
+    .col-4 { grid-column: span 4; }
+    .col-5 { grid-column: span 5; }
+    .col-6 { grid-column: span 6; }
+    .col-7 { grid-column: span 7; }
+    .col-8 { grid-column: span 8; }
+    .col-12 { grid-column: span 12; }
+    .card-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 12px; display: flex; justify-content: space-between; }
+    
+    /* Gauges */
+    .gauge-container { display: flex; flex-direction: column; align-items: center; }
+    canvas.gauge-canvas { width: 180px; height: 110px; }
+    .gauge-value { font-size: 24px; font-weight: bold; margin-top: -15px; color: #fff; }
+    .gauge-label { font-size: 11px; color: var(--text-dim); }
+
+    /* Actuator Indicators */
+    .actuator-row { display: flex; justify-content: space-around; align-items: center; margin-top: 10px; }
+    .indicator-box { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .lamp { width: 36px; height: 36px; border-radius: 50%; background: #21262d; border: 2px solid #484f58; transition: all 0.2s; box-shadow: 0 0 0 rgba(0,0,0,0); }
+    .lamp.active-red { background: var(--red); border-color: #ff7b72; box-shadow: 0 0 16px var(--red); }
+    .lamp.active-green { background: var(--green); border-color: #56d364; box-shadow: 0 0 16px var(--green); }
+    .lamp-label { font-size: 11px; font-weight: 600; text-align: center; }
+
+    /* Camera Viewport */
+    .camera-box { position: relative; width: 100%; height: 210px; background: #000; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+    canvas#cam-canvas { width: 100%; height: 100%; object-fit: cover; }
+    .camera-overlay { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 4px; font-size: 11px; font-family: monospace; }
+    .camera-bbox { position: absolute; border: 2px solid lime; display: none; pointer-events: none; }
+    .camera-bbox-tag { background: lime; color: #000; font-size: 10px; font-weight: bold; padding: 1px 4px; position: absolute; top: -16px; left: -2px; }
+
+    /* Controls */
+    .btn-group { display: flex; flex-wrap: wrap; gap: 8px; }
+    button { background: #21262d; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s; font-weight: 500; }
+    button:hover { background: #30363d; border-color: #8b949e; color: #fff; }
+    button.primary { background: #1f6feb; border-color: #388bfd; color: #fff; }
+    button.primary:hover { background: #388bfd; }
+    button.danger { background: rgba(248,81,73,0.1); border-color: var(--red); color: var(--red); }
+    button.danger:hover { background: var(--red); color: #fff; }
+
+    /* Serial Monitor */
+    .serial-box { background: #090d13; border: 1px solid var(--border); border-radius: 6px; padding: 10px; height: 160px; overflow-y: auto; font-family: "Courier New", Courier, monospace; font-size: 11px; color: #39d353; }
+    .serial-line { margin-bottom: 4px; word-break: break-all; }
+    .serial-line.alert { color: #f85149; }
+
+    /* Oscilloscope */
+    canvas#scope-canvas { width: 100%; height: 170px; background: #090d13; border-radius: 6px; border: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>
+        <span>STM32 Edge-AI Underground Drainage Hazard Simulator</span>
+        <span class="badge" id="mcu-badge">ARM Cortex-M4 @ 168MHz</span>
+      </h1>
+      <p style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">
+        Discrete Hardware-in-the-Loop Emulation: Stateflow Logic &bull; X-CUBE-AI EfficientNet-B0 &bull; ESP8266 Telemetry
+      </p>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <div id="status-pill" class="badge success" style="font-size: 13px; padding: 6px 12px;">SYSTEM NORMAL</div>
+      <button id="btn-audio" onclick="toggleAudio()">Enable 2.7kHz Buzzer</button>
+      <button class="primary" id="btn-run" onclick="toggleRun()">Pause</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- Local OLED Gauges -->
+    <div class="card col-4">
+      <div class="card-title">
+        <span>HC-SR04 Ultrasonic (Water Level)</span>
+        <span id="txt-roc" style="color: var(--accent);">ROC: +0.0 cm/s</span>
+      </div>
+      <div class="gauge-container">
+        <canvas id="gauge-water" class="gauge-canvas" width="180" height="110"></canvas>
+        <div class="gauge-value" id="val-water">12.0 <span style="font-size: 14px;">cm</span></div>
+        <div class="gauge-label">Trip Threshold: 70.0 cm | Blockage ROC: &ge; 8.0 cm/s</div>
+      </div>
+    </div>
+
+    <div class="card col-4">
+      <div class="card-title">
+        <span>MQ-4 Gas Sensor (Methane CH4)</span>
+        <span id="txt-ch4-status">NORMAL</span>
+      </div>
+      <div class="gauge-container">
+        <canvas id="gauge-ch4" class="gauge-canvas" width="180" height="110"></canvas>
+        <div class="gauge-value" id="val-ch4">180 <span style="font-size: 14px;">ppm</span></div>
+        <div class="gauge-label">Hazard Limit: 300 ppm (LEL safety factor)</div>
+      </div>
+    </div>
+
+    <div class="card col-4">
+      <div class="card-title">
+        <span>MQ-7 Gas Sensor (Carbon Monoxide)</span>
+        <span id="txt-co-status">NORMAL</span>
+      </div>
+      <div class="gauge-container">
+        <canvas id="gauge-co" class="gauge-canvas" width="180" height="110"></canvas>
+        <div class="gauge-value" id="val-co">18 <span style="font-size: 14px;">ppm</span></div>
+        <div class="gauge-label">Hazard Limit: 50 ppm (OSHA ceiling)</div>
+      </div>
+    </div>
+
+    <!-- Edge-AI Camera Viewport -->
+    <div class="card col-5">
+      <div class="card-title">
+        <span>OV7670 Camera &bull; Quantized EfficientNet-B0 (X-CUBE-AI)</span>
+        <span id="ai-latency" class="badge">Inference: 36ms</span>
+      </div>
+      <div class="camera-box">
+        <canvas id="cam-canvas" width="224" height="224"></canvas>
+        <div class="camera-overlay">
+          <div>FEED: DCMI DMA 5 FPS</div>
+          <div id="ai-pred" style="color: #56d364; font-weight: bold;">CLASS: CLEAR (98.4%)</div>
+        </div>
+        <div id="cam-bbox" class="camera-bbox">
+          <div id="cam-tag" class="camera-bbox-tag">PERSON 96%</div>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 11px; margin-top: 8px; color: var(--text-dim);">
+        <span>Tensor: [224x224x3] INT8</span>
+        <span>Target: Clear / Animal / Person</span>
+      </div>
+    </div>
+
+    <!-- Actuators & Hardware Stateflow Status -->
+    <div class="card col-3">
+      <div class="card-title">Local Actuators & Indicators</div>
+      <div class="actuator-row" style="margin-top: 15px;">
+        <div class="indicator-box">
+          <div id="lamp-relay" class="lamp active-green"></div>
+          <div class="lamp-label">5V Relay<br><span id="txt-relay" style="color:var(--green)">OPEN (OFF)</span></div>
+        </div>
+        <div class="indicator-box">
+          <div id="lamp-buzzer" class="lamp"></div>
+          <div class="lamp-label">Piezo Buzzer<br><span id="txt-buzzer" style="color:var(--text-dim)">SILENT</span></div>
+        </div>
+        <div class="indicator-box">
+          <div id="lamp-block" class="lamp"></div>
+          <div class="lamp-label">Blockage Flag<br><span id="txt-block" style="color:var(--text-dim)">CLEAR</span></div>
+        </div>
+      </div>
+      <div style="margin-top: 25px; font-size: 11px; background: #090d13; padding: 8px; border-radius: 4px; border: 1px solid var(--border);">
+        <div><b>FSM State:</b> <span id="fsm-name" style="color: var(--accent);">SAFE_NORMAL</span></div>
+        <div><b>Alarm Level:</b> <span id="alarm-level">0 (Normal)</span></div>
+        <div><b>SysTick Clock:</b> <span id="sim-time">0.000 s</span></div>
+      </div>
+    </div>
+
+    <!-- HIL Interactive Fault Injection -->
+    <div class="card col-4">
+      <div class="card-title">Interactive Fault Injection (HIL Testing)</div>
+      <div class="btn-group" style="flex-direction: column;">
+        <button class="danger" onclick="injectBlockage()">Trigger Pipe Blockage Surge (+48 cm)</button>
+        <button class="danger" onclick="injectMethane()">Inject Toxic Methane Leak (CH4 > 300 ppm)</button>
+        <button class="danger" onclick="injectCO()">Inject Carbon Monoxide Spike (CO > 50 ppm)</button>
+        <div style="display: flex; gap: 8px;">
+          <button style="flex:1" onclick="setVision('person')">Spawn Person</button>
+          <button style="flex:1" onclick="setVision('animal')">Spawn Animal</button>
+          <button style="flex:1" onclick="setVision('clear')">Clear Vision</button>
+        </div>
+        <button class="primary" onclick="resetEnvironment()">Flush & Reset System (Recover)</button>
+      </div>
+    </div>
+
+    <!-- Live Dual-Trace Oscilloscope -->
+    <div class="card col-7">
+      <div class="card-title">
+        <span>Real-Time Oscilloscope (Sensor & Derivative Dynamics)</span>
+        <span style="font-size: 11px; color: var(--text-dim);">
+          <span style="color: #58a6ff;">&bull; Water (cm)</span> &nbsp;
+          <span style="color: #bc8cff;">&bull; CH4 (ppm/10)</span> &nbsp;
+          <span style="color: #d29922;">&bull; ROC (cm/s)</span> &nbsp;
+          <span style="color: #f85149;">&bull; Hazard Status</span>
+        </span>
+      </div>
+      <canvas id="scope-canvas" width="600" height="170"></canvas>
+    </div>
+
+    <!-- Serial Monitor Telemetry -->
+    <div class="card col-5">
+      <div class="card-title">
+        <span>ESP8266 UART2 DMA Telemetry (JSON TX Stream)</span>
+        <span class="badge">115200 Baud &bull; 1 Hz</span>
+      </div>
+      <div class="serial-box" id="serial-terminal">
+        <div class="serial-line"># STM32 UART2 TX Active (ESP8266 -> ThingSpeak MQTT)</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ------------------------------------------------------------------------
+    // Discrete Simulation State Variables
+    // ------------------------------------------------------------------------
+    let simRunning = true;
+    let simTime = 0.0;
+    const dt = 0.05; // 50ms sensor & Stateflow step
+
+    let waterLvl = 12.0;
+    let waterPrev = 12.0;
+    let waterRoc = 0.0;
+    let ch4Ppm = 180.0;
+    let coPpm = 18.0;
+
+    let isBlockage = false;
+    let visionClass = 'clear'; // 'clear', 'animal', 'person'
+    let visionClassId = 0;
+
+    let fsmState = 'SAFE_NORMAL'; // 'SAFE_NORMAL' or 'HAZARD_ACTIVE'
+    let hazardStatus = false;
+    let alarmLevel = 0;
+
+    let surgeActive = false;
+    let gasSpikeCH4 = 0;
+    let gasSpikeCO = 0;
+
+    // Web Audio Synthesizer for 2.7 kHz Piezo Buzzer
+    let audioCtx = null;
+    let buzzerOsc = null;
+    let buzzerGain = null;
+    let audioEnabled = false;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        buzzerOsc = audioCtx.createOscillator();
+        buzzerGain = audioCtx.createGain();
+        buzzerOsc.type = 'square';
+        buzzerOsc.frequency.setValueAtTime(2700, audioCtx.currentTime); // 2.7 kHz resonant frequency
+        buzzerGain.gain.setValueAtTime(0.0, audioCtx.currentTime);
+        buzzerOsc.connect(buzzerGain);
+        buzzerGain.connect(audioCtx.destination);
+        buzzerOsc.start();
+      }
+    }
+
+    function toggleAudio() {
+      initAudio();
+      audioEnabled = !audioEnabled;
+      document.getElementById('btn-audio').innerText = audioEnabled ? "Mute Buzzer" : "Enable 2.7kHz Buzzer";
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function toggleRun() {
+      simRunning = !simRunning;
+      document.getElementById('btn-run').innerText = simRunning ? "Pause" : "Resume";
+    }
+
+    // Interactive Fault Injection
+    function injectBlockage() {
+      waterLvl += 48.0;
+      isBlockage = true;
+    }
+    function injectMethane() { gasSpikeCH4 += 200; }
+    function injectCO() { gasSpikeCO += 45; }
+    function setVision(cls) {
+      visionClass = cls;
+      visionClassId = (cls === 'person') ? 2 : (cls === 'animal' ? 1 : 0);
+    }
+    function resetEnvironment() {
+      waterLvl = 14.0;
+      gasSpikeCH4 = 0;
+      gasSpikeCO = 0;
+      visionClass = 'clear';
+      visionClassId = 0;
+      isBlockage = false;
+    }
+
+    // ------------------------------------------------------------------------
+    // Radial Gauge Painter
+    // ------------------------------------------------------------------------
+    function drawGauge(canvasId, value, min, max, warnThresh, unit, color) {
+      const cvs = document.getElementById(canvasId);
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width, h = cvs.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const cx = w / 2, cy = h - 15, r = 70;
+      const startAngle = Math.PI;
+      const endAngle = 2 * Math.PI;
+
+      // Background Track
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, startAngle, endAngle, false);
+      ctx.lineWidth = 14;
+      ctx.strokeStyle = '#21262d';
+      ctx.stroke();
+
+      // Warning Zone
+      const warnRatio = (warnThresh - min) / (max - min);
+      const warnAngle = startAngle + warnRatio * Math.PI;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, warnAngle, endAngle, false);
+      ctx.lineWidth = 14;
+      ctx.strokeStyle = 'rgba(248,81,73,0.3)';
+      ctx.stroke();
+
+      // Active Arc
+      const valRatio = Math.min(Math.max((value - min) / (max - min), 0), 1);
+      const valAngle = startAngle + valRatio * Math.PI;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, startAngle, valAngle, false);
+      ctx.lineWidth = 14;
+      ctx.strokeStyle = (value >= warnThresh) ? '#f85149' : color;
+      ctx.stroke();
+    }
+
+    // ------------------------------------------------------------------------
+    // Camera Canvas Painter
+    // ------------------------------------------------------------------------
+    function drawCameraView() {
+      const cvs = document.getElementById('cam-canvas');
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width, h = cvs.height;
+
+      // Dark pipe background
+      const grad = ctx.createRadialGradient(w/2, h/2, 20, w/2, h/2, 110);
+      grad.addColorStop(0, '#1c2128');
+      grad.addColorStop(0.8, '#090d13');
+      grad.addColorStop(1, '#000000');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Sewer pipe rings
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 2;
+      for (let r = 30; r < 120; r += 25) {
+        ctx.beginPath();
+        ctx.arc(w/2, h/2, r, 0, 2*Math.PI);
+        ctx.stroke();
+      }
+
+      // Water reflection at bottom
+      const waterY = h - (waterLvl / 120.0) * h * 0.7;
+      ctx.fillStyle = 'rgba(31,111,235,0.35)';
+      ctx.fillRect(0, waterY, w, h - waterY);
+
+      // Vision Entity Rendering
+      const bbox = document.getElementById('cam-bbox');
+      const tag = document.getElementById('cam-tag');
+      const pred = document.getElementById('ai-pred');
+
+      if (visionClass === 'person') {
+        // Draw maintenance worker / person in pipe
+        ctx.fillStyle = '#f1e05a'; // Reflective yellow vest
+        ctx.fillRect(w/2 - 25, h/2 - 30, 50, 60);
+        ctx.fillStyle = '#ffb3a7'; // Face
+        ctx.beginPath(); ctx.arc(w/2, h/2 - 42, 14, 0, 2*Math.PI); ctx.fill();
+        ctx.fillStyle = '#ffffff'; // Helmet
+        ctx.fillRect(w/2 - 16, h/2 - 60, 32, 16);
+
+        bbox.style.display = 'block';
+        bbox.style.left = '32%'; bbox.style.top = '18%'; bbox.style.width = '36%'; bbox.style.height = '64%';
+        tag.innerText = 'PERSON 96.8%';
+        pred.innerText = 'CLASS: PERSON (96.8% - SAFETY TRIP)';
+        pred.style.color = '#f85149';
+      } else if (visionClass === 'animal') {
+        // Draw rodent / pest
+        ctx.fillStyle = '#8b572a';
+        ctx.beginPath(); ctx.ellipse(w/2, waterY - 15, 20, 10, 0, 0, 2*Math.PI); ctx.fill();
+        ctx.fillStyle = '#333';
+        ctx.beginPath(); ctx.arc(w/2 + 18, waterY - 15, 6, 0, 2*Math.PI); ctx.fill();
+
+        bbox.style.display = 'block';
+        bbox.style.left = '40%'; bbox.style.top = '52%'; bbox.style.width = '24%'; bbox.style.height = '20%';
+        tag.innerText = 'ANIMAL 88.2%';
+        pred.innerText = 'CLASS: ANIMAL (88.2%)';
+        pred.style.color = '#d29922';
+      } else {
+        bbox.style.display = 'none';
+        pred.innerText = 'CLASS: CLEAR (98.4%)';
+        pred.style.color = '#56d364';
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // Oscilloscope Painter
+    // ------------------------------------------------------------------------
+    const scopeData = [];
+    const maxScopePoints = 120;
+
+    function drawScope() {
+      const cvs = document.getElementById('scope-canvas');
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width, h = cvs.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Grid lines
+      ctx.strokeStyle = '#21262d';
+      ctx.lineWidth = 1;
+      for (let y = 20; y < h; y += 30) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+
+      if (scopeData.length < 2) return;
+
+      const dx = w / maxScopePoints;
+
+      // Channel 1: Water Level (Blue)
+      ctx.strokeStyle = '#58a6ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      scopeData.forEach((pt, i) => {
+        const y = h - (pt.water / 120.0) * (h - 20) - 10;
+        if (i === 0) ctx.moveTo(i * dx, y); else ctx.lineTo(i * dx, y);
+      });
+      ctx.stroke();
+
+      // Channel 2: CH4 ppm / 10 (Purple)
+      ctx.strokeStyle = '#bc8cff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      scopeData.forEach((pt, i) => {
+        const y = h - (pt.ch4 / 1000.0) * (h - 20) - 10;
+        if (i === 0) ctx.moveTo(i * dx, y); else ctx.lineTo(i * dx, y);
+      });
+      ctx.stroke();
+
+      // Channel 3: Hazard Status (Red Step)
+      ctx.strokeStyle = '#f85149';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      scopeData.forEach((pt, i) => {
+        const y = pt.hazard ? 25 : h - 15;
+        if (i === 0) ctx.moveTo(i * dx, y); else ctx.lineTo(i * dx, y);
+      });
+      ctx.stroke();
+    }
+
+    // ------------------------------------------------------------------------
+    // Main Discrete Simulation Tick Loop (Every 50ms)
+    // ------------------------------------------------------------------------
+    let uartTickCounter = 0;
+
+    function stepSimulation() {
+      if (!simRunning) return;
+
+      simTime += dt;
+      document.getElementById('sim-time').innerText = simTime.toFixed(2) + ' s';
+
+      // 1. Environmental Sensor Physics Update
+      if (waterLvl < 118.0) waterLvl += 0.35 * dt; // slow ramp
+      if (gasSpikeCH4 > 0) gasSpikeCH4 = Math.max(0, gasSpikeCH4 - 1.5);
+      if (gasSpikeCO > 0) gasSpikeCO = Math.max(0, gasSpikeCO - 0.4);
+
+      // Gas trends + noise
+      ch4Ppm = 180 + 160 * Math.sin(0.08 * simTime) + (Math.random() - 0.5) * 8 + gasSpikeCH4;
+      coPpm = 18 + 22 * Math.sin(0.05 * simTime + 0.785) + (Math.random() - 0.5) * 3 + gasSpikeCO;
+
+      // Rate of change
+      waterRoc = (waterLvl - waterPrev) / dt;
+      waterPrev = waterLvl;
+      if (waterRoc >= 8.0) isBlockage = true;
+      else if (waterRoc < 1.0) isBlockage = false;
+
+      document.getElementById('txt-roc').innerText = `ROC: ${waterRoc >= 0 ? '+' : ''}${waterRoc.toFixed(1)} cm/s`;
+
+      // 2. STM32 Stateflow Hazard FSM Evaluation
+      if (fsmState === 'SAFE_NORMAL') {
+        const trip = (ch4Ppm > 300 || coPpm > 50 || waterLvl > 70 || isBlockage || visionClass === 'person');
+        if (trip) {
+          fsmState = 'HAZARD_ACTIVE';
+          hazardStatus = true;
+          alarmLevel = (ch4Ppm > 450 || coPpm > 80 || waterLvl > 90) ? 2 : 1;
+        } else {
+          hazardStatus = false;
+          alarmLevel = 0;
+        }
+      } else { // HAZARD_ACTIVE
+        const recover = (ch4Ppm < 240 && coPpm < 38 && waterLvl < 58 && !isBlockage && visionClass !== 'person');
+        if (recover) {
+          fsmState = 'SAFE_NORMAL';
+          hazardStatus = false;
+          alarmLevel = 0;
+        } else {
+          hazardStatus = true;
+          alarmLevel = (ch4Ppm > 450 || coPpm > 80 || waterLvl > 90) ? 2 : 1;
+        }
+      }
+
+      // Update UI Status Badges
+      const pill = document.getElementById('status-pill');
+      if (hazardStatus) {
+        pill.className = 'badge danger';
+        pill.innerText = 'CRITICAL HAZARD DETECTED';
+      } else {
+        pill.className = 'badge success';
+        pill.innerText = 'SYSTEM NORMAL';
+      }
+
+      document.getElementById('fsm-name').innerText = fsmState;
+      document.getElementById('fsm-name').style.color = hazardStatus ? 'var(--red)' : 'var(--green)';
+      document.getElementById('alarm-level').innerText = `${alarmLevel} (${alarmLevel === 2 ? 'Critical' : alarmLevel === 1 ? 'Warning' : 'Normal'})`;
+
+      // Update Hardware Actuators
+      const lampRelay = document.getElementById('lamp-relay');
+      const txtRelay = document.getElementById('txt-relay');
+      if (hazardStatus) {
+        lampRelay.className = 'lamp active-red';
+        txtRelay.innerText = 'CLOSED (ACTIVE)';
+        txtRelay.style.color = 'var(--red)';
+      } else {
+        lampRelay.className = 'lamp active-green';
+        txtRelay.innerText = 'OPEN (SAFE)';
+        txtRelay.style.color = 'var(--green)';
+      }
+
+      const lampBuzzer = document.getElementById('lamp-buzzer');
+      const txtBuzzer = document.getElementById('txt-buzzer');
+      if (hazardStatus) {
+        lampBuzzer.className = 'lamp active-red';
+        txtBuzzer.innerText = '2.7kHz SOUNDING';
+        txtBuzzer.style.color = 'var(--red)';
+        if (audioEnabled && buzzerGain) buzzerGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      } else {
+        lampBuzzer.className = 'lamp';
+        txtBuzzer.innerText = 'SILENT';
+        txtBuzzer.style.color = 'var(--text-dim)';
+        if (buzzerGain) buzzerGain.gain.setValueAtTime(0.0, audioCtx.currentTime);
+      }
+
+      const lampBlock = document.getElementById('lamp-block');
+      const txtBlock = document.getElementById('txt-block');
+      if (isBlockage) {
+        lampBlock.className = 'lamp active-red';
+        txtBlock.innerText = 'SURGE TRIP';
+        txtBlock.style.color = 'var(--red)';
+      } else {
+        lampBlock.className = 'lamp';
+        txtBlock.innerText = 'NORMAL';
+        txtBlock.style.color = 'var(--text-dim)';
+      }
+
+      // Digital Readouts
+      document.getElementById('val-water').innerHTML = `${waterLvl.toFixed(1)} <span style="font-size: 14px;">cm</span>`;
+      document.getElementById('val-ch4').innerHTML = `${Math.round(ch4Ppm)} <span style="font-size: 14px;">ppm</span>`;
+      document.getElementById('val-co').innerHTML = `${Math.round(coPpm)} <span style="font-size: 14px;">ppm</span>`;
+
+      // Draw Gauges & Camera
+      drawGauge('gauge-water', waterLvl, 0, 120, 70, 'cm', '#58a6ff');
+      drawGauge('gauge-ch4', ch4Ppm, 0, 1000, 300, 'ppm', '#bc8cff');
+      drawGauge('gauge-co', coPpm, 0, 100, 50, 'ppm', '#d29922');
+      drawCameraView();
+
+      // Oscilloscope buffer
+      scopeData.push({ water: waterLvl, ch4: ch4Ppm, hazard: hazardStatus });
+      if (scopeData.length > maxScopePoints) scopeData.shift();
+      drawScope();
+
+      // 3. IoT ESP8266 Telemetry Transmission (Every 1000ms = 20 ticks)
+      uartTickCounter++;
+      if (uartTickCounter >= 20) {
+        uartTickCounter = 0;
+        const payload = {
+          hazard: hazardStatus ? 1 : 0,
+          ch4: Math.round(ch4Ppm),
+          co: Math.round(coPpm),
+          water_cm: parseFloat(waterLvl.toFixed(1)),
+          blockage: isBlockage ? 1 : 0,
+          vision: visionClass
+        };
+        const term = document.getElementById('serial-terminal');
+        const line = document.createElement('div');
+        line.className = 'serial-line' + (hazardStatus ? ' alert' : '');
+        line.innerText = `[UART2 TX @ ${simTime.toFixed(1)}s]: ` + JSON.stringify(payload);
+        term.appendChild(line);
+        term.scrollTop = term.scrollHeight;
+      }
+    }
+
+    // Initialize & Run at 20 Hz
+    setInterval(stepSimulation, 50);
+  </script>
+</body>
+</html>
